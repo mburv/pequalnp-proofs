@@ -6,7 +6,12 @@
 # that one file, and a Lean file can run code while it compiles. So that compile is treated as
 # hostile: it runs as a separate account that cannot write the checker, the verifier, the pinned
 # library, the definitions or the statement, cannot reach the network, and never sees the
-# GitHub credential of this run (.github/scripts/lake-locked.sh).
+# GitHub credential of this run (.github/scripts/lake-locked.sh). The same holds for an
+# outside-written module already on the base branch that the gap lists as an import: it is
+# compiled only in that locked step, never before it (outside-guard.mjs closure): the base
+# build runs with the folder of outside files moved out of the tree. CONSEQUENCE: a fleet module
+# that imports an outside proof can never be a listed import (the guard refuses it). A file that
+# builds on outside proofs imports the outside modules themselves, and the gap lists them.
 name: authoritative
 
 on:
@@ -117,8 +122,17 @@ jobs:
           # The statement comes from the desk's public list, never from the pull request.
           curl -sSf --proto '=https' --max-redirs 0 --max-filesize 5000000 -o "$W/in/gaps.json" "$GAPS_URL"
           node "$W/base/.github/scripts/outside-guard.mjs" gap "$W/in/gaps.json" "$GAP" "$(cat "$W/in/pr.file")" "$W/in"
-          # Before anything is built: the file may import Mathlib and the modules the gap lists.
-          node "$W/base/.github/scripts/outside-guard.mjs" imports "$W/in/proof.lean" "$W/in/imports.json"
+          # Before anything is built: the file may import Mathlib and the modules the gap lists,
+          # and every helper sits inside the file's own namespace (named from its path).
+          node "$W/base/.github/scripts/outside-guard.mjs" imports "$W/in/proof.lean" "$W/in/imports.json" "$(cat "$W/in/pr.file")"
+          # A listed module may itself be outside-written (under PEqualNP.Outside, merged on the
+          # base). Such a module runs code when it compiles, like the judged file, so it is never
+          # built before the locked step. This splits what the listed modules import, read as
+          # text: base modules (in/base-imports.txt, built in the next step) and outside modules
+          # (in/outside-imports.txt, built only by the checker's build in the locked step, as the
+          # locked account). It refuses an outside module whose text fails the proof-file rules,
+          # and a base module that imports an outside one.
+          node "$W/base/.github/scripts/outside-guard.mjs" closure "$W/base" "$W/in/imports.json" "$(cat "$W/in/pr.file")" "$W/in"
 
       - name: Install the pinned Lean toolchain
         run: |
@@ -138,15 +152,44 @@ jobs:
           cd "$W/base/lean"
           export PATH="$TC_BIN:$PATH" PEQUALNP_REAL_LAKE="$TC_BIN/lake" PEQUALNP_HOME="$W/queue" LAKE_ARTIFACT_CACHE=false
           "$TC_BIN/lake" exe cache get
-          # Base code only: the verifier, the definitions, and the modules the gap lets the file
-          # import. The proof file is not in the tree yet, so nothing of it is compiled here.
+          # Base code only: the verifier, the definitions, and the base modules the gap lets the
+          # file import (in/base-imports.txt). The proof file is not in the tree yet, so nothing
+          # of it is compiled here. No outside-written module is named here, and none is reached:
+          # the guard refused a base module that imports one. Listed outside modules are built
+          # in the locked step, by the checker's own build of the proof file.
           # The whole of Mathlib is named too: the cache does not carry every hash file Lake
           # keeps beside a module, and Lake writes a missing one the first time it replays that
           # module. That must happen here, as this account, because the locked account cannot
           # write under the library (it failed there on two modules: permission denied).
           set -- checklemma +Mathlib +PEqualNP.Defs
-          while IFS= read -r m; do if [ -n "$m" ]; then set -- "$@" "+$m"; fi; done < "$W/in/imports.txt"
+          while IFS= read -r m; do if [ -n "$m" ]; then set -- "$@" "+$m"; fi; done < "$W/in/base-imports.txt"
+          # CONTAINMENT: during this build the folder of outside-written files is not in the tree
+          # (moved aside, one rename on the same disk; the guard step has already read it). Should
+          # anything built here import an outside module after all, Lean finds no such module and
+          # the build fails, so this step fails: it can never compile one. The folder is put back
+          # when this step ends, however it ends, before the steps that need it (the lock step
+          # puts the proof file into it, and hashes the listed outside sources).
+          aside="$W/aside"; mkdir "$aside"
+          # Put back onto an empty place only: were a folder of that name there (something made it
+          # during the build), mv would nest the saved folder inside it and the check would pass.
+          restore() {
+            if [ -e "$aside/Outside" ]; then
+              if [ -e PEqualNP/Outside ] || [ -L PEqualNP/Outside ]; then echo "FAULT: a folder of outside files appeared during the base build; the saved one was not put back"; exit 1; fi
+              mv "$aside/Outside" PEqualNP/Outside
+            fi
+          }
+          trap restore EXIT
+          moved=no; if [ -e PEqualNP/Outside ]; then mv PEqualNP/Outside "$aside/Outside"; moved=yes; fi
+          [ ! -e PEqualNP/Outside ] || { echo "FAULT: the folder of outside files could not be moved aside"; exit 1; }
           ../tools/bin/lake build "$@"
+          restore; trap - EXIT
+          if [ "$moved" = yes ]; then
+            [ -d PEqualNP/Outside ] && [ ! -e "$aside/Outside" ] || { echo "FAULT: the folder of outside files was not put back"; exit 1; }
+          fi
+          # A tripwire as well: nothing under PEqualNP/Outside may have been built here.
+          if [ -n "$(find .lake/build/lib/lean/PEqualNP/Outside .lake/build/ir/PEqualNP/Outside -type f 2>/dev/null | head -n 1)" ]; then
+            echo "FAULT: the base step built an outside-written module; stopping before anything else runs"; exit 1
+          fi
 
       - name: Swap space for the verifier
         run: |
@@ -182,20 +225,28 @@ jobs:
           chmod -R a+rX,go-w "$W"
           # ... except the output directories of its own module. It cannot create a file
           # anywhere else in the tree, so it cannot plant a setting, a package or a library.
+          # The listed outside modules (in/outside-imports.txt) are flat files of the same
+          # directory (PEqualNP.Outside.L_<gap>), so their compiled results land here too, written
+          # by the locked account, and nothing of the base is: every base module they import was
+          # built in the base step. Whatever is compiled here, the verifier sends every one of
+          # their constants to the kernel again, as it does those of the proof file.
           for d in lib/lean ir; do
             mkdir -p "$W/base/lean/.lake/build/$d/PEqualNP/Outside"
             sudo chown outsider:outsider "$W/base/lean/.lake/build/$d/PEqualNP/Outside"
           done
-          # What the verdict will be about, hashed before the hostile step runs.
+          # What the verdict will be about, hashed before the hostile step runs. With it, the
+          # source of every listed outside module (in/outside-sources.txt: paths the guard wrote,
+          # each matching base/lean/PEqualNP/Outside/L_<gap>.lean, so word splitting is safe).
           ( cd "$W" && sha256sum "base/$file" in/statement.txt base/tools/check-lean.mjs base/tools/build.sh \
               base/tools/bin/lake base/lean/CheckLemma.lean base/lean/.lake/build/bin/checklemma \
-              base/.github/scripts/lake-locked.sh ) | tee "$RUNNER_TEMP/before.sha256"
+              base/.github/scripts/lake-locked.sh $(cat in/outside-sources.txt) ) | tee "$RUNNER_TEMP/before.sha256"
 
       - name: Run the BASE checker on the file (the only step that runs outside code)
         id: run
-        # A backstop only: the checker's own limit below (20 minutes) ends it first, with a
-        # recorded exit code, so the verdict step reports a FAULT and prints what it was doing.
-        timeout-minutes: 25
+        # A backstop only: the checker's own limit below (20 minutes, and 4 more per listed
+        # outside module, at most 45) ends it first, with a recorded exit code, so the verdict
+        # step reports a FAULT and prints what it was doing.
+        timeout-minutes: 50
         run: |
           # The checker's exit code is read below, so a nonzero one must not end this step.
           set +e -u
@@ -238,17 +289,54 @@ jobs:
           cap=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) - 1572864 ))
           [ "$cap" -le 6815744 ] || cap=6815744
           echo "memory: $(awk '/^MemTotal:/{print $2}' /proc/meminfo) kB, limit for the checker: $cap kB"
-          sudo systemd-run --quiet --scope --collect -p MemoryMax="${cap}K" \
+          # Time: 20 minutes for the proof file, 4 more for each listed outside module the same
+          # build compiles first, at most 45 minutes.
+          limit=$(( 1200 + 240 * $(grep -c . "$W/in/outside-imports.txt" || true) ))
+          [ "$limit" -le 2700 ] || limit=2700
+          echo "time limit for the checker: $limit s"
+          # THE MEMORY WATCH (2026-11-23: three public runs lost their machine in this step and left
+          # no log). Every 60 s ONE line goes to this step's own output, which GitHub shows live, so a
+          # lost machine leaves its last numbers on the page: the machine's available memory, swap in
+          # use, the checker's memory now and at its peak (its own cgroup, the scope named below).
+          # And the machine is never lost silently: when the MACHINE itself runs short (available
+          # memory under 5 percent of all of it for two samples in a row, or memory pressure 'full'
+          # over 40 percent for the last minute), the watch ends the checker and the verdict step
+          # reports a FAULT with that line. Not at 90 percent of the checker's own limit: under a
+          # hard limit the checker works at its limit and swaps, which is how a heavy honest proof
+          # passes; it is the machine running short that loses a runner.
+          unit="pnp-check-$GITHUB_RUN_ID"
+          cg="/sys/fs/cgroup/system.slice/$unit.scope"
+          ( low=0
+            while sleep 60; do
+              total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo); avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
+              swap=$(awk '/^SwapTotal:/{t=$2} /^SwapFree:/{f=$2} END{print t-f}' /proc/meminfo)
+              now=$(cat "$cg/memory.current" 2>/dev/null || echo 0); peak=$(cat "$cg/memory.peak" 2>/dev/null || echo 0)
+              full=$(awk '/^full/{for(i=1;i<=NF;i++) if($i ~ /^avg60=/){sub("avg60=","",$i); print int($i)}}' /proc/pressure/memory 2>/dev/null || echo 0)
+              echo "memory watch t=$(( $(date +%s) - t0 ))s: available $((avail / 1024)) MB of $((total / 1024)), swap used $((swap / 1024)) MB, checker now $((now / 1048576)) MB, peak $((peak / 1048576)) MB of $((cap / 1024)), pressure full $full%"
+              if [ "$avail" -lt $((total / 20)) ]; then low=$((low + 1)); else low=0; fi
+              if [ "$low" -ge 2 ] || [ "${full:-0}" -gt 40 ]; then
+                echo "memory watch: the MACHINE is running short (available $((avail / 1024)) MB, pressure full $full%): ending the checker before the runner is lost" | tee -a "$RUNNER_TEMP/checker.err"
+                sudo systemctl kill --signal=KILL "$unit.scope" 2>/dev/null || true
+                break
+              fi
+            done ) &
+          watch=$!
+          sudo systemd-run --quiet --scope --collect --unit="$unit" -p MemoryMax="${cap}K" \
               --uid="$(id -u)" --gid="$(id -g)" \
           taskset -c 0,1 env -i HOME="$HOME" LANG=C.UTF-8 PATH="$TC_BIN:$node_bin:/usr/bin:/bin" \
               PEQUALNP_REAL_LAKE="$W/base/.github/scripts/lake-locked.sh" PEQUALNP_HOME="$W/queue" \
               PNP_TC_BIN="$TC_BIN" PNP_GITCONFIG="$W/in/gitconfig" PNP_BUILD_LOGS="$RUNNER_TEMP/builds" \
-            timeout -k 30 1200 node "$W/base/tools/check-lean.mjs" "$W/base/$file" "$W/in/statement.txt" check \
+            timeout -k 30 "$limit" node "$W/base/tools/check-lean.mjs" "$W/base/$file" "$W/in/statement.txt" check \
             > "$RUNNER_TEMP/checker.out" 2> "$RUNNER_TEMP/checker.err"
           code=$?
-          kill "$sampler" 2>/dev/null
-          # 124 or 137: the 20 minute limit ended the checker. A FAULT, never a verdict on the proof.
-          case "$code" in 124|137) echo "the checker was stopped after 20 minutes" >> "$RUNNER_TEMP/checker.err" ;; esac
+          kill "$sampler" "$watch" 2>/dev/null
+          # Ended by the memory watch: a FAULT of the machine, never a verdict on the proof.
+          if grep -q '^memory watch: the MACHINE is running short' "$RUNNER_TEMP/checker.err" 2>/dev/null; then
+            code=137
+          else
+            # 124 or 137: the time limit ended the checker. A FAULT, never a verdict on the proof.
+            case "$code" in 124|137) echo "the checker was stopped after $limit seconds" >> "$RUNNER_TEMP/checker.err" ;; esac
+          fi
           # Nothing the compile started may outlive it, and neither may the verifier.
           sudo pkill -KILL -u outsider || true
           pkill -KILL -f "$W/base/lean/.lake/build/bin/checklemma" || true
@@ -305,7 +393,7 @@ jobs:
           # The trusted files must be what they were before the hostile step.
           ( cd "$W" && sha256sum "base/$file" in/statement.txt base/tools/check-lean.mjs base/tools/build.sh \
               base/tools/bin/lake base/lean/CheckLemma.lean base/lean/.lake/build/bin/checklemma \
-              base/.github/scripts/lake-locked.sh ) > "$RUNNER_TEMP/after.sha256"
+              base/.github/scripts/lake-locked.sh $(cat in/outside-sources.txt) ) > "$RUNNER_TEMP/after.sha256"
           same=yes; cmp -s "$RUNNER_TEMP/before.sha256" "$RUNNER_TEMP/after.sha256" || same=no
           last=$(tail -n 1 "$RUNNER_TEMP/checker.out")
           manifests=$(grep -c '^MANIFEST {' "$RUNNER_TEMP/checker.out" || true)
@@ -351,6 +439,22 @@ jobs:
           echo "head commit: $(cat "$W/in/pr.head")   file: $file   content hash: $(cat "$W/in/pr.blob")"
           echo "base commit: $GITHUB_SHA   statement sha256: $(sha256sum "$W/in/statement.txt" | cut -d' ' -f1)"
           echo "Merge only while the pull request's head is still the head commit above."
+          if [ -s "$W/in/outside-imports.txt" ]; then
+            # Printed by this step from paths the guard wrote; no text of a pull request.
+            echo "----- listed outside modules -----"
+            echo "Their sources were hashed before the locked step and compared after it (with the files above)."
+            echo "The compiled files the verifier loaded for them were written in the locked step, by the"
+            echo "locked account; the verifier sent every constant of them to the kernel again."
+            echo "sha256 of each compiled file after the checker ran:"
+            while IFS= read -r m; do
+              # The locked account wrote this file: read only a plain file, never a link or a
+              # pipe, and with a time limit.
+              o="$W/base/lean/.lake/build/lib/lean/$(printf '%s' "$m" | tr . /).olean"
+              h="(no plain compiled file)"
+              if [ -f "$o" ] && [ ! -L "$o" ]; then h=$(timeout 60 sha256sum "$o" | cut -d' ' -f1); fi
+              echo "  $m ${h:-(could not be read)}"
+            done < "$W/in/outside-imports.txt"
+          fi
           # ACCEPTED needs all of: exit 0, an ACCEPTED last line, one MANIFEST line, untouched files.
           verdict=FAULT
           case "$CODE" in

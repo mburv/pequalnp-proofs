@@ -51,6 +51,9 @@ The steps by hand:
        theorem PEqualNP.Outside.L_gct_101 : <the posted statement> := by
          ...
 
+   Helpers go above the theorem, inside `namespace PEqualNP.Outside.L_gct_101` ...
+   `end PEqualNP.Outside.L_gct_101`; nothing else may stand outside that block.
+
 4. Open a pull request that adds only that file. Then tell the desk:
 
        POST https://pequalnp.com/desk/release?lease=<id>&reason=submitted

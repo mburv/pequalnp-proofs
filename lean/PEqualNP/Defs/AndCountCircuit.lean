@@ -37,8 +37,10 @@ Caveats for statements.
   thinker's "set of output gates". The output set is NOT required to be nonempty: the empty
   circuit (size 0, empty output) computes the edge function of an edgeless graph, and is the
   star circuit of the empty cover.
-* Sides may be empty, may repeat a vertex, and the two sides of a gate may share vertices; no
-  normal form (nonempty, disjoint, unit-free) is built in. State such hypotheses explicitly.
+* Sides may be empty, and the two sides of a gate may share vertices (a side's vertices form a
+  finite set, so a vertex appears in a side at most once); no normal form (nonempty, disjoint,
+  unit-free) is built in. State such hypotheses explicitly.
+* Every circuit is false at the empty set, so no circuit computes the constant true function.
 * Size is `size`, the AND count; it is not the gate count of `Defs/CircuitLowerBounds`.
 * No 4-cycle condition is built in: on the 4-cycle one gate computes the edge function while
   the cover number is 2, so the family's statements assume girth at least 5 themselves.

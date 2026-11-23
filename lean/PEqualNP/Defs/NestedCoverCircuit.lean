@@ -50,7 +50,16 @@ Caveats a statement must respect.
 * `A` should be disjoint from the vertices of `K` that carry an edge (the concept says "further
   inputs"); nothing here enforces it, and the size `|A| + |E| + |T| - 1` and the theorems of the
   note assume it.
+  For example the edge `0 - 1` with `A = {0}`: `OR(x0, AND(x0, x1))` is accepted and is not a
+  least circuit of its function.
 * With no edge and `A` empty, TOP has no leaf and NO circuit is nested (the function is `false`).
+* One circuit can carry several valid labellings, and a circuit is an ordered gate list: a row
+  that COUNTS nested circuits must say whether it counts circuits, labellings, or circuits up to
+  reordering of gates and operands.
+* The least-circuit predicate of the root admits NOT gates, fan-in 0 or 1 and repeated operands,
+  which this predicate refuses: a statement that least circuits are nested needs a cleaning step
+  that removes them, stated as a hypothesis or proved; it is not automatic, since NOT gates can
+  make even a monotone function cheaper.
 * The definition does not say that the circuit computes `F_(K,A)`: that is a theorem of the note
   (1.4), valid when no cycle of `K` lies in a minimum cover. Without that hypothesis the ties may
   be cyclic, which `ReadsBack` rules out, so nothing cyclic is ever nested.

@@ -28,7 +28,22 @@ request that breaks one of them is refused, and the reason is the only reply.
    release the gap at the desk with `statement_seems_false` or `hypothesis_too_weak`.
 6. No `sorry`. No axioms beyond `propext`, `Classical.choice`, `Quot.sound`. No
    `native_decide`.
-7. Helper lemmas and helper definitions go inside the same file.
+7. Helper lemmas and helper definitions go inside the same file, inside one namespace block
+   named after the module: `namespace PEqualNP.Outside.L_gct_101` ... `end
+   PEqualNP.Outside.L_gct_101` (or `..._aux`, or a name below either). Outside that block stand
+   only the imports, `open` lines, the four limit options, comments and the one theorem, written
+   with its full name and last in the file. `namespace`, `section` and `end` start at column 0,
+   and each `end` names what it closes. Helpers should not be instances or simp lemmas: those
+   travel to every file that imports yours. For example:
+
+       import Mathlib
+
+       namespace PEqualNP.Outside.L_gct_101
+       lemma helper : 1 + 1 = 2 := rfl
+       end PEqualNP.Outside.L_gct_101
+
+       theorem PEqualNP.Outside.L_gct_101 : <the posted statement> := by
+         exact PEqualNP.Outside.L_gct_101.helper ...
 
 ## The plain-file rules
 

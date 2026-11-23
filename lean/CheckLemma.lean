@@ -11,7 +11,9 @@ result and decides four things:
    again: the definitions root on top of the pinned modules it imports, everything else on top
    of the whole pinned library and the definitions root. A declaration that reached the
    compiled file without the kernel's agreement is refused here, and so is a project
-   declaration that carries a name the pinned library or the definitions root already uses.
+   declaration that carries a name the pinned library or the definitions root already uses
+   (but for a second copy of one of their theorems, same statement, which is left out: see
+   `sameTheorem`).
 2. THEOREM. The module declares a theorem whose name is the module's name.
 3. AXIOMS. The theorem's transitive axioms, walked over the re-checked constants (not read from
    any cache the file could write), are inside the allowlist. `sorry` is the axiom `sorryAx`,
@@ -72,6 +74,36 @@ def reject (cls msg : String) : IO UInt32 := do
 /-- No project module may declare a constant under this namespace: it is the checker's own. -/
 def reserved : Name := `PEqualNPChecker
 
+/-- A project constant `c` that carries the name of a constant `l` of the statement environment
+is refused, with one exception, decided here: both are theorems, with the same universe
+parameters and the same type. Lean writes some theorems on demand, in whichever module first
+needs them (the equation lemmas `f.eq_1`, `f.eq_def`, ...): a project file that needs one and
+does not import the pinned module that already holds it gets a second copy of its own, through
+no act of its author.
+
+Such a `c` is not accepted in place of `l`. It is LEFT OUT: it never reaches the kernel and never
+enters the environment anything is checked in. Why nothing is lost:
+
+* Every project constant that is kept is sent to the kernel on top of the statement environment,
+  and there the name is `l`, the library's own theorem, with the library's own proof. Whatever
+  `c`'s body says is never read by anything. So the final environment is the statement
+  environment extended by kernel-accepted declarations only, as before; leaving a declaration
+  out of the replay can only make the kernel refuse more (a kept constant that needed something
+  `l` does not give), never accept more.
+* A name still means one thing for the statement and for the proof: the name is `l` in both.
+* The test is not what makes this sound (the point above holds for any left-out constant); it is
+  what keeps the exception narrow. A term that names a theorem type-checks from its universe
+  parameters and its type alone, and those are `l`'s exactly, so the honest file checks against
+  `l` as it did against `c`. Everything else that collides is refused as before: a definition,
+  an opaque, an axiom, an inductive type, a constructor, a recursor, a quotient constant on
+  either side, a theorem whose type or universe parameters differ, a theorem against a
+  non-theorem. `==` on `Expr` is equality up to bound variable names and binder annotations,
+  neither of which the kernel reads; universe levels and constant names are compared exactly. -/
+def sameTheorem (c l : ConstantInfo) : Bool :=
+  match c, l with
+  | .thmInfo c, .thmInfo l => c.levelParams == l.levelParams && c.type == l.type
+  | _, _ => false
+
 unsafe def run (modStr stmtPath kind : String) : IO UInt32 := do
   let mod := modStr.toName
   unless kind == "check" || kind == "refute" do
@@ -127,8 +159,10 @@ unsafe def run (modStr stmtPath kind : String) : IO UInt32 := do
         if reserved.isPrefixOf c.name then
           return ← reject "reserved-name" s!"{m} declares {c.name}; names under {reserved} belong to the checker"
         -- A name of the pinned library or of the definitions root is theirs alone, whether or
-        -- not the declaring file imports the module that holds it.
-        if (libEnv.find? c.name).isSome then
+        -- not the declaring file imports the module that holds it. A second copy of one of
+        -- their theorems (`sameTheorem`) is left out of what is checked: the name stays theirs.
+        if let some l := libEnv.find? c.name then
+          if sameTheorem c l then continue
           return ← reject "redeclares" s!"{m} declares {c.name}, a name the pinned library or the definitions root already declares. A project module may not declare it again"
         consts := consts.insert c.name c
   unless names.contains mod && isProject mod do

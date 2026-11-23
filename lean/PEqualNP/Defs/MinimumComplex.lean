@@ -50,6 +50,13 @@ Caveats a statement must respect.
 * `cc` and `escapeWindow` are `sInf` of sets of naturals: `0` when the set is empty (`escapeWindow`
   is also `0` when the one-above family is empty).
 * `IsReducedFacet` of a rigid function (one facet) is the empty set, the empty face.
+* The strict size `cc` is not the main size of the project (`HasCircuitSize`, and its infimum
+  `PEqualNP.PendantBit.minCircuitSize`). They differ on the constants: for `n ≥ 1` a strict
+  circuit needs 2 gates for a constant, the main size is 0 for constant false and 1 for constant
+  true. A sanity helper shows only one direction, main size at most `cc`.
+* `escapeWindow n f = 0` covers three different situations: every one-above set is already
+  padded; there is no one-above set; and no window works at all (`sInf` of the empty set). A
+  statement about the window must say which case it excludes.
 -/
 
 namespace PEqualNP.MinimumComplex

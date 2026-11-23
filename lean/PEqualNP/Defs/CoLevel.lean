@@ -33,7 +33,11 @@ Caveats a statement must respect.
   characteristic `l` it is read mod `l`). Since every p-unit has constant term `1`, "the sum is
   a constant" and "the sum equals `|A| + N`" say the same thing.
 * `coLevel` is an `ℕ∞` defined by `sInf` over the naturals that admit a witness; `sInf ∅ = ⊤`.
-* `p = 0` makes every p-unit the polynomial `1`, so every multiset has co-level `0`.
+* `p = 0` makes every p-unit the polynomial `1`, so every multiset has co-level `0`; likewise
+  `m = 0` (no variables) makes every linear form `0` and every multiset has co-level `0`.
+* The field `K` is arbitrary. Values computed in the source are for the complex numbers and a
+  generic unit; over a small field they can differ (over the field with three elements some single
+  p-units have co-level 2). A statement must name its field.
 -/
 
 namespace PEqualNP.CoLevel

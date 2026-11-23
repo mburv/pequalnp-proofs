@@ -46,6 +46,13 @@ import PEqualNP.Defs.Peelable
 import PEqualNP.Defs.NestedCoverCircuit
 import PEqualNP.Defs.LiteralPartition
 import PEqualNP.Defs.MinimumComplex
+import PEqualNP.Defs.PendantBit
+import PEqualNP.Defs.BorrowedCoverCircuit
+import PEqualNP.Defs.LineDegree
+import PEqualNP.Defs.CircuitMoves
+import PEqualNP.Defs.LowMerge
+import PEqualNP.Defs.NewLowMerge
+import PEqualNP.Defs.AffinePlane
 
 /-!
 # The definitions root

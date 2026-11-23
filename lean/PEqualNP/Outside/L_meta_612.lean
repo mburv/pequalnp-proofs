@@ -867,4 +867,92 @@ theorem cone_card_le_size (C : Circuit) (n root : ℕ) : (cone C n root).card �
   have hsub : cone C n root ⊆ Finset.range C.size := fun j hj => (Finset.mem_filter.mp hj).1
   simpa using Finset.card_le_card hsub
 
+theorem val_eval (x : Fin n → Bool) :
+    val C n x C.output = C.eval (List.ofFn x) := by
+  simp [val, Circuit.eval, wires_eq]
+
+noncomputable def coneW (C : Circuit) (n w : ℕ) : Finset ℕ :=
+  if h : n ≤ w ∧ w - n < C.gates.length then
+    let g := C.gates[w - n]'h.2
+    insert (w - n) (g.inputs.foldl (fun s a => if a < w then s ∪ coneW C n a else s) (∅ : Finset ℕ))
+  else
+    ∅
+termination_by w
+decreasing_by
+  omega
+
+theorem coneW_input {w : ℕ} (hw : w < n) : coneW C n w = ∅ := by
+  unfold coneW
+  have hnot : ¬ (n ≤ w ∧ w - n < C.gates.length) := by
+    intro h
+    omega
+  simp [hnot]
+
+theorem fold_cone_subset {w : ℕ} (inputs : List ℕ) (s : Finset ℕ)
+    (hs : s ⊆ Finset.range C.size)
+    (ih : ∀ a, a < w → coneW C n a ⊆ Finset.range C.size) :
+    inputs.foldl (fun s a => if a < w then s ∪ coneW C n a else s) s ⊆ Finset.range C.size := by
+  induction inputs generalizing s with
+  | nil => simpa
+  | cons a as ihf =>
+    by_cases ha : a < w
+    · have hnext : s ∪ coneW C n a ⊆ Finset.range C.size := by
+        intro x hx
+        rcases Finset.mem_union.mp hx with hx | hx
+        · exact hs hx
+        · exact (ih a ha) hx
+      simpa [ha] using ihf (s ∪ coneW C n a) hnext
+    · simpa [ha] using ihf s hs
+
+theorem coneW_subset (w : ℕ) : coneW C n w ⊆ Finset.range C.size := by
+  induction w using Nat.strong_induction_on with
+  | _ w ih =>
+    rw [coneW]
+    by_cases h : n ≤ w ∧ w - n < C.gates.length
+    · simp only [h, ↓reduceDIte]
+      intro j hj
+      have hlt : w - n < C.gates.length := h.2
+      rcases Finset.mem_insert.mp hj with rfl | hfold
+      · exact Finset.mem_range.mpr hlt
+      · exact fold_cone_subset (C.gates[w - n]'hlt).inputs ∅ (by simp) ih hfold
+    · simp [h]
+
+theorem coneW_card_le (w : ℕ) : (coneW C n w).card ≤ C.size := by
+  simpa using Finset.card_le_card (coneW_subset (C := C) (n := n) w)
+
+open Classical in
+noncomputable def neighbors (G : SimpleGraph (Fin n)) (v : Fin n) : Finset (Fin n) :=
+  Finset.univ.filter (fun u => G.Adj v u)
+
+theorem one_gate {G : SimpleGraph (Fin n)}
+    (hE : ∀ x : Fin n → Bool,
+      val C n x C.output = true ↔ ∃ u v, G.Adj u v ∧ x u = true ∧ x v = true)
+    (u v : Fin n) (huv : G.Adj u v) : 1 ≤ C.size := by
+  have ht := yes_edge hE huv
+  by_contra h0
+  have hsize : C.gates.length = 0 := by
+    simp only [Circuit.size] at h0
+    omega
+  have hout : C.output < n ∨ n ≤ C.output := lt_or_ge C.output n
+  rcases hout with hlt | hge
+  · have hsing : val C n (e1 ⟨C.output, hlt⟩) C.output = true := by
+      rw [val_input C n _ _ hlt]
+      simp [e1]
+    exact Bool.eq_false_iff.mp (no_singleton hE _) hsing
+  · have hfalse : val C n (e2 u v) C.output = false := by
+      rw [val, wires_eq]
+      apply getD_of_length_le
+      rw [foldl_step_length, List.length_ofFn, hsize]
+      exact hge
+    exact Bool.eq_false_iff.mp hfalse ht
+
+theorem coneW_eq {w : ℕ} :
+    coneW C n w =
+      if h : n ≤ w ∧ w - n < C.gates.length then
+        insert (w - n)
+          ((C.gates[w - n]'h.2).inputs.foldl (fun s a => if a < w then s ∪ coneW C n a else s) ∅)
+      else
+        ∅ := by
+  rw [coneW.eq_def]
+
 end PEqualNP.Outside.Lmeta612
